@@ -1,0 +1,455 @@
+---
+title: 'Chapter 7 & 8: Multivariate Models & Modelling long Run relationships in Finance
+  (Chris Brooks)'
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+*Simulataneous Equation Models*
+
+```{r}
+#install.packages("lme4", repos="http://cran.rstudio.com/",type = "binary",dependencies=TRUE)
+#install.packages("nlme", repos="http://cran.rstudio.com/",type = "binary",dependencies=TRUE)
+#packageurl <- "https://cran.r-project.org/src/contrib/Archive/pbkrtest/pbkrtest_0.4-4.tar.gz" 
+#install.packages(packageurl, repos=NULL, type="source")
+```
+
+```{r}
+#install.packages('broom')
+#install.packages('systemfit')
+#install.packages('knitr')
+#install.packages("foreign")  # if not already installed
+#library(devtools)
+#install_github("https://github.com/ccolonescu/PoEdata")
+#install.packages("systemfit", repos="http://R-Forge.R-project.org")
+#install.packages("car", dependencies=TRUE)
+#install.packages('xfun')
+```
+
+```{r}
+rm(list=ls()) #Removes all items in Environment!
+library(car)
+library(systemfit)
+library(broom) #for `glance(`) and `tidy()`
+library(PoEdata) #for PoE4 dataset
+library(knitr) #for kable()
+```
+
+*** Model 1 ***
+
+**Structural Form**
+```{r}
+data("truffles", package="PoEdata")
+D <- q~p+ps+di
+S <- q~p+pf
+sys <- list(D,S)
+instr <- ~ps+di+pf
+truff.sys <- systemfit(sys, inst=instr, 
+                       method="2SLS", data=truffles)
+summary(truff.sys)
+```
+
+**Reduced Form**
+```{r}
+Q.red <- lm(q~ps+di+pf, data=truffles)
+P.red <- lm(q~ps+di+pf, data=truffles)
+kable(tidy(Q.red), digits=4,
+      caption="Reduced form for quantity")
+
+kable(tidy(P.red), digits=4,
+      caption="Reduced form for price")
+```
+*** Model 2 ***
+
+** Structural Model **
+```{r}
+data("fultonfish", package="PoEdata")
+fishQ.ols <- lm(lquan~mon+tue+wed+thu+stormy, data=fultonfish)
+kable(tidy(fishQ.ols), digits=4,
+      caption="Reduced 'Q' equation for the fultonfish example")
+
+fishP.ols <- lm(lprice~mon+tue+wed+thu+stormy, data=fultonfish)
+kable(tidy(fishP.ols), digits=4,
+      caption="Reduced 'P' equation for the fultonfish example")
+```
+Discussion Point: In the structural equations, In demand equation, stormy was not present thus, it is the one left (G-1). Hence, it needs to be significant for identification of structural equation of Demand. If all the the weekday coefficients are not sigificant but stormy is, then structural equation of Supply is unreliable.
+
+See the structural equation below:
+```{r}
+fish.D <- lquan~lprice+mon+tue+wed+thu
+fish.S <- lquan~lprice+stormy
+fish.eqs <- list(fish.D, fish.S)
+fish.ivs <- ~mon+tue+wed+thu+stormy
+fish.sys <- systemfit(fish.eqs, method="2SLS", 
+              inst=fish.ivs, data=fultonfish)
+summary(fish.sys)
+```
+In the output of the 2SLS estimation, eq1 is the demand equation, and eq2 is the supply. As we have seen the demand equation is identified, i.e., reliable, while the supply equation is not. A solution might be to find better instruments, other than the weekdays for the demand equation. Finding valid instruments is, however, a difficult task in many problems.
+
+
+
+*Simulataneous Equation Models*
+```{r}
+# install.packages('tseries')
+# install.packages('dynlm')
+# install.packages('nlWaldTest')
+# install.packages('sandwich')
+# install.packages('forecast')
+```
+
+```{r}
+library(tseries) # for ADF unit root tests
+library(dynlm)
+library(nlWaldTest) # for the `nlWaldtest()` function
+library(lmtest) #for `coeftest()` and `bptest()`.
+library(broom) #for `glance(`) and `tidy()`
+library(PoEdata) #for PoE4 datasets
+library(car) #for `hccm()` robust standard errors
+library(sandwich)
+library(knitr) #for kable()
+library(forecast) 
+```
+The non-stationary time series can lead to spurious regression, thus need to identify and transform them to be used in models (differencing, Error Correction, etc)
+```{r}
+data("usa", package="PoEdata")
+usa.ts <- ts(usa, start=c(1984,1), end=c(2009,4),frequency=4)
+Dgdp <- diff(usa.ts[,1])
+Dinf <- diff(usa.ts[,"inf"])
+Df <- diff(usa.ts[,"f"])
+Db <- diff(usa.ts[,"b"])
+usa.ts.df <- ts.union(gdp=usa.ts[,1], # package tseries
+                      inf=usa.ts[,2], 
+                      f=usa.ts[,3],
+                      b=usa.ts[,4],
+                      Dgdp,Dinf,Df,Db,
+                      dframe=TRUE)
+plot(usa.ts.df$gdp)
+plot(usa.ts.df$Dgdp)
+plot(usa.ts.df$inf)
+plot(usa.ts.df$Dinf)
+plot(usa.ts.df$f)
+plot(usa.ts.df$Df)
+plot(usa.ts.df$b)
+plot(usa.ts.df$Db)
+kable(head(usa.ts.df), 
+caption="Time series data frame constructed with 'ts.union'")
+```
+General AR Model: y_(t) = a + b*t + c*y_(t-1) + v_(t)
+```{r}
+N <- 500
+a <- 1
+l <- 0.01
+rho <- 0.7
+
+
+#AR(1)
+set.seed(246810)
+v <- ts(rnorm(N,0,1))
+
+y <- ts(rep(0,N))
+for (t in 2:N){
+  y[t]<- rho*y[t-1]+v[t]
+}
+plot(y,type='l', ylab="rho*y[t-1]+v[t]")
+abline(h=0)
+
+
+#AR(1) with drift
+y <- ts(rep(0,N))
+for (t in 2:N){
+  y[t]<- a+rho*y[t-1]+v[t]
+}
+plot(y,type='l', ylab="a+rho*y[t-1]+v[t]")
+abline(h=0)
+
+
+#AR(1) wwith time and drift
+y <- ts(rep(0,N))
+for (t in 2:N){
+  y[t]<- a+l*time(y)[t]+rho*y[t-1]+v[t]
+}
+plot(y,type='l', ylab="a+l*time(y)[t]+rho*y[t-1]+v[t]")
+abline(h=0)
+
+
+#Random Walk
+y <- ts(rep(0,N))
+for (t in 2:N){
+  y[t]<- y[t-1]+v[t]
+}
+plot(y,type='l', ylab="y[t-1]+v[t]")
+abline(h=0)
+
+
+#Random walk with drift
+a <- 0.1
+y <- ts(rep(0,N))
+for (t in 2:N){
+  y[t]<- a+y[t-1]+v[t]
+}
+plot(y,type='l', ylab="a+y[t-1]+v[t]")
+abline(h=0)
+
+
+#Random walk with drift and trend
+y <- ts(rep(0,N))
+for (t in 2:N){
+  y[t]<- a+l*time(y)[t]+y[t-1]+v[t]
+}
+plot(y,type='l', ylab="a+l*time(y)[t]+y[t-1]+v[t]")
+abline(h=0)
+```
+** Spurious Regression **
+```{r}
+T <- 1000
+set.seed(1357)
+y <- ts(rep(0,T))
+vy <- ts(rnorm(T))
+for (t in 2:T){
+  y[t] <- y[t-1]+vy[t]
+}
+
+set.seed(4365)
+x <- ts(rep(0,T))
+vx <- ts(rnorm(T))
+for (t in 2:T){
+  x[t] <- x[t-1]+vx[t]
+}
+y <- ts(y[300:1000])
+x <- ts(x[300:1000])
+ts.plot(y,x, ylab="y and x")
+
+spurious.ols <- lm(y~x)
+summary(spurious.ols)
+
+plot(x, y, type="p", col="grey")
+```
+** Test for Stationarity **
+1. Dicky Fuller test: Need to specify whether we are considering the model contains constand and trend, either one of them or none as critical values vary for different configurations (Chris Brooks: The critical values are different from t distribution)
+
+2. Augmented Dicky Fuller Test: Include various lags but check for coefficient of y_(t-1). No of lags to use from correlogram (acf)
+
+```{r}
+plot(usa.ts.df$f)
+Acf(usa.ts.df$f)
+```
+2 plots tll 2 things: Trend + contant, lags=10
+
+```{r}
+adf.test(usa.ts.df$f, k=10)
+```
+Can't reject the null hypothesis of non-stationarity => Series is non-stationary
+
+```{r}
+f <- usa.ts.df$f
+f.dyn <- dynlm(d(f)~L(f)+L(d(f)))
+tidy(f.dyn)
+```
+
+```{r}
+df <- diff(usa.ts.df$f)
+plot(df)
+Acf(df)
+adf.test(df, k=2)
+```
+Tells # of times series need to be differenced to make it stationary
+```{r}
+ndiffs(f)
+```
+** Cointegration **
+test for cointegration is just the dicky fuller watson on residuals (want the null to be rejected to be considered stationary)
+
+```{r}
+b <- usa.ts.df$b
+f <- usa.ts.df$f
+fb.dyn <- dynlm(b~f)
+ehat.fb <- resid(fb.dyn)
+ndiffs(ehat.fb) #result: 1
+
+output <- dynlm(d(ehat.fb)~L(ehat.fb)+L(d(ehat.fb))-1) #no constant
+foo <- tidy(output)
+foo
+```
+the statistic Tau = -4.196 is lesss than critical value of -3.37, thus null hyp is rejected. Therefore series is cointegrated.
+
+A better test under tseries package:
+```{r}
+b <- usa.ts.df$b
+f <- usa.ts.df$f
+bfx <- as.matrix(cbind(b,f), demean=FALSE)
+po.test(bfx)
+```
+Null hypothesis marginally rejected, thus the 2 are cointegrated
+
+
+** The Error Correction Model **
+delta(b_{t}) = -a*(b_{t-1} - b1 - b2*f_{t-1}) + d0*delta(f_{t}) + d1*delta(f_{t-1}) + v_{t}
+
+```{r}
+#Error Terms
+b.ols <- dynlm(L(b)~L(f))
+b1ini <- coef(b.ols)[[1]]
+b2ini <- coef(b.ols)[[2]]
+
+#Other terms (refer to article for eqn 6)
+d.ols <- dynlm(b~L(b)+f+L(f))
+aini <- 1-coef(d.ols)[[2]]
+d0ini <- coef(d.ols)[[3]]
+d1ini <- coef(d.ols)[[4]]
+Db <- diff(b)
+Df <- diff(f)
+Lb <- lag(b,-1)
+Lf <- lag(f,-1)
+LDf <- lag(diff(f),-1)
+bfset <- data.frame(ts.union(cbind(b,f,Lb,Lf,Db,Df,LDf)))
+formula <- Db ~ -a*(Lb-b1-b2*Lf)+d0*Df+d1*LDf
+bf.nls <- nls(formula, na.action=na.omit, data=bfset,
+          start=list(a=aini, b1=b1ini, b2=b2ini, 
+                     d0=d0ini, d1=d1ini))
+kable(tidy(bf.nls), 
+caption="Parameter estimates in the error correction model")
+
+```
+*VAR Models*
+
+```{r}
+data("fred", package="PoEdata")
+fred <- ts(fred, start=c(1960,1),end=c(2009,4),frequency=4)
+ts.plot(fred[,"c"],fred[,"y"], type="l", 
+        lty=c(1,2), col=c(1,2))
+legend("topleft", border=NULL, legend=c("c","y"), 
+       lty=c(1,2), col=c(1,2))
+```
+
+```{r}
+Acf(fred[,"c"])
+Acf(fred[,"y"])
+adf.test(fred[,"c"])
+```
+```{r}
+adf.test(fred[,"y"])
+adf.test(diff(fred[,"y"]))
+adf.test(diff(fred[,"c"]))
+```
+
+```{r}
+cointcy <- dynlm(c~y, data=fred)
+ehat <- resid(cointcy)
+adf.test(ehat)
+```
+
+No cointegration, thus just use the simple VAR model
+
+```{r}
+# install.packages('vars')
+```
+
+
+```{r}
+library(vars)
+Dc <- diff(fred[,"c"])
+Dy <- diff(fred[,"y"])
+varmat <- as.matrix(cbind(Dc,Dy))
+varfit <- VAR(varmat) # `VAR()` from package `vars`
+summary(varfit)
+```
+Impulse Response Function
+```{r}
+impresp <- irf(varfit)
+plot(impresp)
+```
+
+*Variance Decomposition*
+```{r}
+plot(fevd(varfit)) 
+```
+
+*VECM*
+Use this:https://www.r-econometrics.com/timeseries/vecintro/
+
+In VECM, lags (p) plays a key role. Hence, need to get the desired number of lags. Method: VAR on levels!
+
+```{r}
+# install.packages('bvartools')
+# install.packages('urca')
+```
+
+```{r}
+library(bvartools) # Load the package, which contains the data
+data("e6") # Load data
+plot(e6) # Plot data
+
+# Estimate VAR
+var_aic <- VAR(e6, type = "const", lag.max = 8, ic = "AIC")
+
+# Lag order suggested by AIC
+var_aic$p
+```
+Got 4 lags for levels, thus 4-1=3 for difference (VECM form). Since, VECM require same as VAR in levels, thus using K=4.
+
+Addition of deterministic terms outsid error correction term in VECM model is delicate, generally a constant and deterministic term is added.
+```{r}
+library(urca) # Load package
+
+# Estimate
+vec <- ca.jo(e6, ecdet = "none", type = "trace",
+             K = 4, spec = "transitory", season = 4)
+
+summary(vec)
+```
+
+Trace test suggest r=1, consider 1st column of Eigenvectors as Beta and 1st column of Weights (W) as alpha
+```{r}
+# Beta -> 1st column
+round(vec@V, 2)
+
+# Alpha -> 1st column
+round(vec@W, 2)
+
+# Estimates of non-cointegrating part of model
+round(vec@GAMMA, 2)
+```
+VECM using tsDyn Package
+
+```{r}
+# install.packages('tsDyn')
+```
+
+```{r}
+# Load package
+library(tsDyn)
+
+# Obtain constant and seasonal dummies
+seas <- gen_vec(data = e6, p = 4, r = 1, const = "unrestricted", seasonal = "unrestricted")
+# Lag order p is 4 since gen_vec assumes that p corresponds to VAR form
+seas <- seas$data$X[, 7:10]
+
+# Estimate
+est_tsdyn <- VECM(e6, lag = 3, r = 1, include = "none", estim = "ML", exogen = seas)
+
+# Print results
+summary(est_tsdyn)
+```
+The impulse response function of a VECM is usually obtained from its VAR form. The function vec2var of the vars package can be used to transform the output of the ca.jo function into an object that can be handled by the irf function of the vars package. Note that since ur.jo does not set the rank r of the cointegration matrix automatically, it has to be specified manually.
+```{r}
+# Transform VEC to VAR with r = 1
+var <- vec2var(vec, r = 1)
+
+# Obtain IRF
+ir <- irf(var, n.ahead = 20, impulse = "R", response = "Dp",
+          ortho = FALSE, runs = 500)
+
+# Plot  
+plot(ir)
+
+# Obtain IRF
+ir <- irf(var, n.ahead = 20, impulse = "Dp", response = "R",
+          ortho = FALSE, runs = 500)
+
+# Plot  
+plot(ir)
+```
+Note that an important difference to stationary VAR models is that the impulse response of a cointegrated VAR model does not neccessarily approach zero, because the variables are not stationary.
